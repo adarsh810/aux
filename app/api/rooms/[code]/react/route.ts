@@ -1,5 +1,34 @@
 import { supabaseServer } from '@/lib/supabase-server';
 
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ code: string }> }
+) {
+  const { code } = await params;
+  const { searchParams } = new URL(request.url);
+  const trackUri = searchParams.get('trackUri');
+
+  const { data: room } = await supabaseServer
+    .from('aux_rooms')
+    .select('id')
+    .eq('code', code.toUpperCase())
+    .single();
+
+  if (!room || !trackUri) return Response.json({ fire: 0, skull: 0, dance: 0 });
+
+  const { data: reactions } = await supabaseServer
+    .from('aux_reactions')
+    .select('type')
+    .eq('room_id', room.id)
+    .eq('track_uri', trackUri);
+
+  return Response.json({
+    fire: reactions?.filter(r => r.type === 'fire').length || 0,
+    skull: reactions?.filter(r => r.type === 'skull').length || 0,
+    dance: reactions?.filter(r => r.type === 'dance').length || 0,
+  });
+}
+
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ code: string }> }

@@ -87,6 +87,31 @@ function NowPlayingTab({
   const [reactions, setReactions] = useState({ fire: 0, skull: 0, dance: 0 });
   const [myReaction, setMyReaction] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (!track?.uri) return;
+    const uri = track.uri;
+
+    async function fetchCounts() {
+      try {
+        const res = await fetch(`/api/rooms/${roomCode}/react?trackUri=${encodeURIComponent(uri)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setReactions({ fire: data.fire || 0, skull: data.skull || 0, dance: data.dance || 0 });
+        }
+      } catch { /* ignore */ }
+    }
+
+    fetchCounts();
+
+    const supabase = getSupabaseClient();
+    const channel = supabase
+      .channel(`guest-rxn-${roomCode}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'aux_reactions' }, fetchCounts)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [track?.uri, roomCode]);
+
   async function sendReaction(type: string) {
     if (!track?.uri) return;
     try {
@@ -113,8 +138,7 @@ function NowPlayingTab({
 
   const voteLabel: Record<string, string> = {
     skip: 'Skip Song',
-    challenge: 'Challenge for Aux',
-    pull_aux: 'Pull the Aux',
+    challenge: 'Take the Aux',
   };
 
   return (
@@ -437,8 +461,7 @@ function VoteTab({
 
   const voteActions = [
     { type: 'skip', label: 'Skip Song', desc: 'Vote to skip the current track', cost: 2, emoji: '⏭️' },
-    { type: 'challenge', label: 'Challenge for Aux', desc: 'Take the aux from current holder', cost: 3, emoji: '🎯' },
-    { type: 'pull_aux', label: 'Pull the Aux', desc: 'Claim the aux cord', cost: 2, emoji: '🎧' },
+    { type: 'challenge', label: 'Take the Aux', desc: 'Vote to seize control of the music', cost: 3, emoji: '🎧' },
   ];
 
   async function initVote(type: string, cost: number) {
@@ -467,8 +490,7 @@ function VoteTab({
 
   const voteLabel: Record<string, string> = {
     skip: 'Skip Song',
-    challenge: 'Challenge for Aux',
-    pull_aux: 'Pull the Aux',
+    challenge: 'Take the Aux',
   };
 
   return (
@@ -1058,7 +1080,7 @@ export default function GuestRoomPage() {
       </div>
 
       {/* Content */}
-      <div style={{ paddingTop: '56px' }}>
+      <div style={{ paddingTop: 'max(68px, calc(env(safe-area-inset-top) + 56px))' }}>
         {tab === 'now-playing' && (
           <NowPlayingTab
             track={currentTrack}

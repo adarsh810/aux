@@ -6,7 +6,6 @@ import type { Host } from '@/lib/types';
 const VOTE_COSTS: Record<string, number> = {
   skip: 2,
   challenge: 3,
-  pull_aux: 2,
 };
 
 export async function POST(
@@ -189,7 +188,7 @@ export async function POST(
         }
       }
 
-      if (voteSession.type === 'pull_aux' || voteSession.type === 'challenge') {
+      if (voteSession.type === 'challenge') {
         // Transfer aux to initiator
         if (voteSession.initiated_by) {
           await supabaseServer

@@ -85,13 +85,29 @@ function NowPlayingTab({
   const [myReaction, setMyReaction] = useState<string | null>(null);
 
   useEffect(() => {
-    if (track?.uri && room?.id) {
-      fetch(`/api/rooms/${room.code}/react`)
-        .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data) setReactions(data); })
-        .catch(() => {});
+    if (!track?.uri) return;
+    const uri = track.uri;
+
+    async function fetchCounts() {
+      try {
+        const res = await fetch(`/api/rooms/${roomCode}/react?trackUri=${encodeURIComponent(uri)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setReactions({ fire: data.fire || 0, skull: data.skull || 0, dance: data.dance || 0 });
+        }
+      } catch { /* ignore */ }
     }
-  }, [track?.uri, room]);
+
+    fetchCounts();
+
+    const supabase = getSupabaseClient();
+    const channel = supabase
+      .channel(`host-rxn-${roomCode}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'aux_reactions' }, fetchCounts)
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); };
+  }, [track?.uri, roomCode]);
 
   async function sendReaction(type: string) {
     if (!track?.uri || !guestId) return;
@@ -111,8 +127,7 @@ function NowPlayingTab({
 
   const voteTypeLabel: Record<string, string> = {
     skip: 'Skip Song',
-    challenge: 'Challenge for Aux',
-    pull_aux: 'Pull the Aux',
+    challenge: 'Take the Aux',
   };
 
   return (
@@ -795,7 +810,7 @@ export default function HostPartyPage() {
       </div>
 
       {/* Content */}
-      <div style={{ paddingTop: '64px' }}>
+      <div style={{ paddingTop: 'max(72px, calc(env(safe-area-inset-top) + 60px))' }}>
         {tab === 'now-playing' && (
           <NowPlayingTab
             room={room}

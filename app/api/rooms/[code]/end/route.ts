@@ -24,13 +24,7 @@ export async function POST(
     return Response.json({ error: 'Room not found' }, { status: 404 });
   }
 
-  // Mark room ended
-  await supabaseServer
-    .from('aux_rooms')
-    .update({ status: 'ended', ended_at: new Date().toISOString() })
-    .eq('id', room.id);
-
-  // Gather data for wrapped
+  // Gather data for wrapped BEFORE marking ended (realtime fires on status change)
   const [playedResult, guestsResult, voteSessionsResult] = await Promise.all([
     supabaseServer.from('aux_played').select('*').eq('room_id', room.id).order('played_at'),
     supabaseServer.from('aux_guests').select('*').eq('room_id', room.id),
@@ -154,6 +148,12 @@ export async function POST(
   if (error || !wrapped) {
     return Response.json({ error: 'Failed to save wrapped' }, { status: 500 });
   }
+
+  // Mark room ended AFTER wrapped is saved so guests can load the recap
+  await supabaseServer
+    .from('aux_rooms')
+    .update({ status: 'ended', ended_at: new Date().toISOString() })
+    .eq('id', room.id);
 
   return Response.json({ wrapped, roomId: room.id });
 }
