@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import { v4 as uuidv4 } from 'uuid';
 import type { SpotifyDevice } from '@/lib/types';
 
 function DeviceIcon({ type }: { type: string }) {
@@ -49,12 +50,26 @@ export default function HostSetup() {
     setError('');
 
     try {
+      const sessionId = localStorage.getItem('aux_session_id') || uuidv4();
+      localStorage.setItem('aux_session_id', sessionId);
+
+      let hostName = 'Host';
+      try {
+        const meRes = await fetch('/api/auth/me');
+        if (meRes.ok) {
+          const meData = await meRes.json();
+          hostName = meData.display_name || meData.email || 'Host';
+        }
+      } catch { /* ignore */ }
+
       const res = await fetch('/api/rooms', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           deviceId: selectedDevice.id,
           deviceName: selectedDevice.name,
+          sessionId,
+          hostName,
         }),
       });
 
@@ -66,6 +81,9 @@ export default function HostSetup() {
       }
 
       const data = await res.json();
+      if (data.hostGuestId) {
+        localStorage.setItem(`aux_guest_id_${data.code}`, data.hostGuestId);
+      }
       setCreatedCode(data.code);
     } catch {
       setError('Something went wrong');

@@ -5,7 +5,7 @@ import { useRouter, useParams } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabase-client';
 import type { Room, Guest, QueueItem, VoteSession, Battle, SpotifyTrack } from '@/lib/types';
 
-type Tab = 'now-playing' | 'queue' | 'vote' | 'battle';
+type Tab = 'now-playing' | 'queue' | 'vote' | 'battle' | 'guests';
 
 interface CurrentTrack {
   uri: string;
@@ -22,6 +22,7 @@ function BottomNav({ tab, setTab }: { tab: Tab; setTab: (t: Tab) => void }) {
     { id: 'queue', label: 'Queue', icon: '📋' },
     { id: 'vote', label: 'Vote', icon: '🗳️' },
     { id: 'battle', label: 'Battle', icon: '⚔️' },
+    { id: 'guests', label: 'Guests', icon: '👥' },
   ];
 
   return (
@@ -556,6 +557,63 @@ function VoteTab({
   );
 }
 
+function GuestsTab({ guests, myGuestId }: { guests: Guest[]; myGuestId: string }) {
+  return (
+    <div style={{ padding: '16px', paddingBottom: '80px' }}>
+      <h2 style={{ fontSize: '22px', fontWeight: 800, marginBottom: '16px' }}>Party ({guests.length})</h2>
+      {guests.length === 0 ? (
+        <div style={{ textAlign: 'center', paddingTop: '48px', color: '#888' }}>
+          <div style={{ fontSize: '48px', marginBottom: '12px' }}>👥</div>
+          <p>No one here yet</p>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {guests.map(g => (
+            <div
+              key={g.id}
+              style={{
+                background: g.id === myGuestId ? '#1A2E1A' : '#111',
+                border: `1px solid ${g.id === myGuestId ? '#1DB954' : '#1A1A1A'}`,
+                borderRadius: '14px',
+                padding: '14px 16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '12px',
+              }}
+            >
+              <div
+                style={{
+                  width: '40px',
+                  height: '40px',
+                  borderRadius: '50%',
+                  background: g.id === myGuestId ? '#1DB954' : '#2A2A2A',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '18px',
+                  fontWeight: 700,
+                  color: g.id === myGuestId ? '#000' : '#888',
+                  flexShrink: 0,
+                }}
+              >
+                {g.name.charAt(0).toUpperCase()}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  {g.name}
+                  {g.id === myGuestId && <span style={{ fontSize: '11px', color: '#1DB954', background: '#0D1F0D', padding: '2px 6px', borderRadius: '6px' }}>You</span>}
+                  {g.is_muted && <span style={{ fontSize: '11px', color: '#FF4444', background: '#2A1111', padding: '2px 6px', borderRadius: '6px' }}>Muted</span>}
+                </div>
+                <div style={{ color: '#888', fontSize: '13px' }}>💳 {g.credits} credits</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BattleTab({
   activeBattle,
   roomCode,
@@ -1038,6 +1096,9 @@ export default function GuestRoomPage() {
             guestId={guestId || ''}
             onUpdate={fetchRoomData}
           />
+        )}
+        {tab === 'guests' && (
+          <GuestsTab guests={guests} myGuestId={guestId || ''} />
         )}
       </div>
 

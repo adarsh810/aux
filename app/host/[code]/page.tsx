@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { getSupabaseClient } from '@/lib/supabase-client';
-import type { Room, Guest, QueueItem, VoteSession, Battle } from '@/lib/types';
+import type { Room, Guest, QueueItem, VoteSession, Battle, SpotifyTrack } from '@/lib/types';
 
 type Tab = 'now-playing' | 'queue' | 'guests' | 'battle';
 
@@ -70,22 +70,44 @@ function NowPlayingTab({
   isPlaying,
   activeVote,
   onVeto,
+  guestId,
+  roomCode,
 }: {
   room: Room | null;
   track: CurrentTrack | null;
   isPlaying: boolean;
   activeVote: VoteSession | null;
   onVeto: () => void;
+  guestId: string;
+  roomCode: string;
 }) {
   const [reactions, setReactions] = useState({ fire: 0, skull: 0, dance: 0 });
+  const [myReaction, setMyReaction] = useState<string | null>(null);
 
   useEffect(() => {
     if (track?.uri && room?.id) {
-      fetch(`/api/rooms/${room.code}/react`, {
-        method: 'GET',
-      }).catch(() => {});
+      fetch(`/api/rooms/${room.code}/react`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data) setReactions(data); })
+        .catch(() => {});
     }
   }, [track?.uri, room]);
+
+  async function sendReaction(type: string) {
+    if (!track?.uri || !guestId) return;
+    try {
+      const res = await fetch(`/api/rooms/${roomCode}/react`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, guestId, trackUri: track.uri }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setReactions(data);
+        setMyReaction(type);
+      }
+    } catch { /* ignore */ }
+  }
 
   const voteTypeLabel: Record<string, string> = {
     skip: 'Skip Song',
@@ -151,12 +173,26 @@ function NowPlayingTab({
 
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', marginTop: '8px' }}>
             {[{ type: 'fire', emoji: '🔥' }, { type: 'skull', emoji: '💀' }, { type: 'dance', emoji: '🕺' }].map(r => (
-              <div key={r.type} style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: '36px' }}>{r.emoji}</div>
-                <div style={{ fontSize: '14px', color: '#888' }}>
-                  {reactions[r.type as keyof typeof reactions]}
-                </div>
-              </div>
+              <button
+                key={r.type}
+                onClick={() => sendReaction(r.type)}
+                style={{
+                  flex: 1,
+                  background: myReaction === r.type ? '#1A2E1A' : '#111',
+                  border: `2px solid ${myReaction === r.type ? '#1DB954' : '#1A1A1A'}`,
+                  borderRadius: '16px',
+                  padding: '16px 8px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '6px',
+                  minHeight: '64px',
+                }}
+              >
+                <span style={{ fontSize: '32px' }}>{r.emoji}</span>
+                <span style={{ color: '#fff', fontSize: '16px', fontWeight: 700 }}>{reactions[r.type as keyof typeof reactions]}</span>
+              </button>
             ))}
           </div>
 
@@ -229,56 +265,168 @@ function NowPlayingTab({
 function QueueTab({
   queue,
   roomCode,
+  guestId,
   onRemove,
+  onAdded,
 }: {
   queue: QueueItem[];
   roomCode: string;
+  guestId: string;
   onRemove: (id: string) => void;
+  onAdded: () => void;
 }) {
+  const [searchQuery, setSearchQuery] = useState('');
+  const [results, setResults] = useState<SpotifyTrack[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [addError, setAddError] = useState('');
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function handleSearch(q: string) {
+    setSearchQuery(q);
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (!q.trim()) { setResults([]); return; }
+    debounceRef.current = setTimeout(async () => {
+      setSearching(true);
+      try {
+        const res = await fetch(`/api/spotify/search?q=${encodeURIComponent(q)}&code=${roomCode}`);
+        if (res.ok) {
+          const data = await res.json();
+          setResults(Array.isArray(data) ? data : []);
+        }
+      } catch { /* ignore */ }
+      finally { setSearching(false); }
+    }, 400);
+  }
+
+  async function addToQueue(track: SpotifyTrack) {
+    setAdding(track.uri);
+    setAddError('');
+    try {
+      const res = await fetch(`/api/rooms/${roomCode}/queue`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          trackUri: track.uri,
+          trackName: track.name,
+          trackArtist: track.artists?.[0]?.name || 'Unknown',
+          trackImage: track.album?.images?.[0]?.url || null,
+          trackDurationMs: track.duration_ms,
+          guestId,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json();
+        setAddError(data.error || 'Failed to add');
+      } else {
+        setSearchQuery('');
+        setResults([]);
+        onAdded();
+      }
+    } catch {
+      setAddError('Something went wrong');
+    } finally {
+      setAdding(null);
+    }
+  }
+
   return (
     <div style={{ padding: '16px', paddingBottom: '80px' }}>
-      <h2 style={{ fontSize: '22px', fontWeight: 800, marginBottom: '16px' }}>Queue ({queue.length})</h2>
-      {queue.length === 0 ? (
-        <div style={{ textAlign: 'center', paddingTop: '48px', color: '#888' }}>
-          <div style={{ fontSize: '48px', marginBottom: '12px' }}>📋</div>
-          <p>Queue is empty</p>
-        </div>
-      ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-          {queue.map((item, idx) => (
-            <div
-              key={item.id}
-              style={{
-                background: '#111',
-                border: '1px solid #1A1A1A',
-                borderRadius: '14px',
-                padding: '12px 14px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '12px',
-              }}
-            >
-              <span style={{ color: '#555', fontSize: '14px', minWidth: '20px' }}>#{idx + 1}</span>
-              {item.track_image ? (
-                <img src={item.track_image} alt="" style={{ width: '44px', height: '44px', borderRadius: '8px', objectFit: 'cover' }} />
-              ) : (
-                <div style={{ width: '44px', height: '44px', borderRadius: '8px', background: '#222', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>🎵</div>
-              )}
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: '15px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.track_name}</div>
-                <div style={{ color: '#888', fontSize: '13px' }}>{item.track_artist}</div>
-                <div style={{ color: '#555', fontSize: '11px' }}>by {item.suggested_by_name || 'Unknown'}</div>
-              </div>
+      <div style={{ marginBottom: '16px' }}>
+        <input
+          type="text"
+          placeholder="Search for a song..."
+          value={searchQuery}
+          onChange={e => handleSearch(e.target.value)}
+        />
+      </div>
+
+      {addError && <p style={{ color: '#FF4444', fontSize: '14px', marginBottom: '12px' }}>{addError}</p>}
+      {searching && <p style={{ color: '#888', textAlign: 'center', padding: '20px' }}>Searching...</p>}
+
+      {results.length > 0 && (
+        <div style={{ marginBottom: '24px' }}>
+          <p style={{ color: '#888', fontSize: '13px', marginBottom: '8px' }}>RESULTS</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {results.map(track => (
               <button
-                onClick={() => onRemove(item.id)}
-                style={{ background: 'none', border: 'none', color: '#FF4444', fontSize: '18px', cursor: 'pointer', padding: '4px' }}
+                key={track.uri}
+                onClick={() => addToQueue(track)}
+                disabled={adding === track.uri}
+                style={{
+                  background: '#111',
+                  border: '1px solid #1A1A1A',
+                  borderRadius: '14px',
+                  padding: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                  cursor: 'pointer',
+                  color: '#fff',
+                  textAlign: 'left',
+                  width: '100%',
+                  opacity: adding === track.uri ? 0.6 : 1,
+                }}
               >
-                ✕
+                {track.album?.images?.[0]?.url ? (
+                  <img src={track.album.images[0].url} alt="" style={{ width: '44px', height: '44px', borderRadius: '8px', flexShrink: 0 }} />
+                ) : (
+                  <div style={{ width: '44px', height: '44px', borderRadius: '8px', background: '#222', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', flexShrink: 0 }}>🎵</div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: '15px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{track.name}</div>
+                  <div style={{ color: '#888', fontSize: '13px' }}>{track.artists?.[0]?.name}</div>
+                </div>
+                <span style={{ color: '#1DB954', fontSize: '20px', flexShrink: 0 }}>
+                  {adding === track.uri ? '...' : '+'}
+                </span>
               </button>
-            </div>
-          ))}
+            ))}
+          </div>
         </div>
       )}
+
+      <div>
+        <p style={{ color: '#888', fontSize: '13px', marginBottom: '8px' }}>QUEUE ({queue.length})</p>
+        {queue.length === 0 ? (
+          <p style={{ color: '#555', textAlign: 'center', paddingTop: '24px' }}>Queue is empty. Search to add songs!</p>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {queue.map((item, idx) => (
+              <div
+                key={item.id}
+                style={{
+                  background: '#111',
+                  border: '1px solid #1A1A1A',
+                  borderRadius: '14px',
+                  padding: '12px 14px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '12px',
+                }}
+              >
+                <span style={{ color: '#555', fontSize: '14px', minWidth: '20px' }}>#{idx + 1}</span>
+                {item.track_image ? (
+                  <img src={item.track_image} alt="" style={{ width: '44px', height: '44px', borderRadius: '8px', objectFit: 'cover' }} />
+                ) : (
+                  <div style={{ width: '44px', height: '44px', borderRadius: '8px', background: '#222', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px' }}>🎵</div>
+                )}
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontWeight: 600, fontSize: '15px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.track_name}</div>
+                  <div style={{ color: '#888', fontSize: '13px' }}>{item.track_artist}</div>
+                  <div style={{ color: '#555', fontSize: '11px' }}>by {item.suggested_by_name || 'Unknown'}</div>
+                </div>
+                <button
+                  onClick={() => onRemove(item.id)}
+                  style={{ background: 'none', border: 'none', color: '#FF4444', fontSize: '18px', cursor: 'pointer', padding: '4px' }}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -444,6 +592,7 @@ export default function HostPartyPage() {
   const code = params.code?.toUpperCase();
 
   const [tab, setTab] = useState<Tab>('now-playing');
+  const [guestId, setGuestId] = useState('');
   const [room, setRoom] = useState<Room | null>(null);
   const [guests, setGuests] = useState<Guest[]>([]);
   const [queue, setQueue] = useState<QueueItem[]>([]);
@@ -488,6 +637,13 @@ export default function HostPartyPage() {
       }
     } catch {
       // ignore
+    }
+  }, [code]);
+
+  useEffect(() => {
+    if (code) {
+      const stored = localStorage.getItem(`aux_guest_id_${code}`);
+      if (stored) setGuestId(stored);
     }
   }, [code]);
 
@@ -647,13 +803,17 @@ export default function HostPartyPage() {
             isPlaying={isPlaying}
             activeVote={activeVote}
             onVeto={handleVeto}
+            guestId={guestId}
+            roomCode={code || ''}
           />
         )}
         {tab === 'queue' && (
           <QueueTab
             queue={queue}
             roomCode={code || ''}
+            guestId={guestId}
             onRemove={handleRemoveFromQueue}
+            onAdded={fetchRoomData}
           />
         )}
         {tab === 'guests' && (

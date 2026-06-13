@@ -17,7 +17,7 @@ export async function POST(request: Request) {
   }
 
   const body = await request.json();
-  const { deviceId, deviceName } = body;
+  const { deviceId, deviceName, sessionId, hostName } = body;
 
   if (!deviceId) {
     return Response.json({ error: 'deviceId is required' }, { status: 400 });
@@ -53,5 +53,21 @@ export async function POST(request: Request) {
     return Response.json({ error: 'Failed to create room' }, { status: 500 });
   }
 
-  return Response.json({ code: room.code, roomId: room.id });
+  let hostGuestId: string | null = null;
+  if (sessionId && hostName) {
+    const { data: hostGuest } = await supabaseServer
+      .from('aux_guests')
+      .insert({
+        room_id: room.id,
+        session_id: sessionId,
+        name: (hostName as string).trim().slice(0, 30),
+        credits: 10,
+        is_muted: false,
+      })
+      .select()
+      .single();
+    if (hostGuest) hostGuestId = hostGuest.id;
+  }
+
+  return Response.json({ code: room.code, roomId: room.id, hostGuestId });
 }
